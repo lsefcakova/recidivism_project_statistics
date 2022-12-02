@@ -1,6 +1,6 @@
 ---
 title: "Stats Final Project"
-author: "Lenka Sefcakova"
+author: "Lenka and Nina"
 date: "2022-12-02"
 output: html_document
 ---
@@ -9,22 +9,18 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+# Recidivism Project
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## Loading Data
 
 ```{r cars}
-summary(cars)
+data = read.csv("NIJ_s_Recidivism_Challenge_Full_Dataset.csv")
 ```
 
-## Including Plots
+## Pre-processing 
 
-You can also embed plots, for example:
+data viz
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+head(data,10)
 ```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
