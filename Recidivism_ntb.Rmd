@@ -7,6 +7,9 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(fastDummies)
+library(glmnet)
 ```
 
 # Recidivism Project
@@ -23,4 +26,114 @@ data viz
 
 ```{r}
 head(data,10)
+```
+```{r}
+### Investigate missing values
+data_cleaned <- data %>%
+  mutate_all(~na_if(., ''))
+
+# Column-wise
+colSums(is.na(data_cleaned)) 
+
+# Missing vals for female vs male
+colSums(is.na(data_cleaned %>% filter(Gender == "F"))) 
+nrow(data_cleaned %>% filter(Gender == "F"))
+
+# Row-wise
+summary((rowSums(is.na(data_cleaned))))
+
+# For now just drop NAs
+data_cleaned <- data_cleaned %>%
+  na.omit() # removes almost half of our observations but data set still very large (note that this removes all entries for females)
+```
+
+```{r}
+### Set up dependent var and covariate matrix
+y <- data_cleaned %>%
+  select(Recidivism_Within_3years) %>%
+  mutate(Recidivism_Within_3years = ifelse(Recidivism_Within_3years == "true", 1, 0)) %>%
+  as.matrix()
+
+# 8423 observations correspond to a reoffence within three years
+#sum(y$Recidivism_Within_3years)/length(y)
+
+### Covariate matrix
+X <- data_cleaned %>%
+  select(-c(ID, Recidivism_Arrest_Year1, Recidivism_Arrest_Year2, Recidivism_Arrest_Year3, Training_Sample,Recidivism_Within_3years)) 
+
+# dummy col 
+dummy_colnames <- X %>% select(-c(Avg_Days_per_DrugTest, DrugTests_THC_Positive,DrugTests_Cocaine_Positive, DrugTests_Meth_Positive, DrugTests_Other_Positive, Percent_Days_Employed, Jobs_Per_Year)) %>%
+  names()
+
+X <- dummy_cols(X, select_columns = dummy_colnames, remove_first_dummy = TRUE, remove_selected_columns = TRUE)
+
+X <- model.matrix(~., data = X)
+
+```
+
+## Fit regular logisitic model
+
+```{r}
+glm.fit <- glm(y ~.,family=binomial(link='logit'), data = as.data.frame(X[,-1]))
+
+summary(glm.fit)
+
+# Check in-sample fit
+pred <- predict(glm.fit, newx = X[,-1])
+assess.glmnet(pred, newy = y, family = "binomial")
+
+```
+```{r}
+### Assess out-of-sample performance
+
+#Implement 10-fold Cross validation
+kfoldCV.mle <- function(y , x, K = 10, seed = 1) {
+  ## Perform K-fold cross-validation for logistic regression
+  ## Input
+  ## - y: response
+  ## - x: data.frame with predictors, intercept should not be present
+  ## - K: number of folds in K-fold cross-validation
+  ## - seed: random number generator seed (optional)
+  ## Output
+  ## - pred: cross-validated predictions for y
+  ## - ssr: residual sum of squares, sum((y-pred)^2)
+  if (!missing(seed)) set.seed(seed)
+  subset <- rep(1:K,ceiling(nrow(x)/K))[1:nrow(x)]
+  subset <- sample(subset,size=nrow(x),replace=FALSE)
+  pred <- double(nrow(x))
+  if (ncol(x)>0) {
+    for (k in 1:K) {
+      sel <- subset==k 
+      fit <- glmnet(x=x[!sel,,drop=FALSE], y=y[!sel], family="binomial", lambda=0)  
+      pred[sel] <- predict(fit, newx=x[sel,,drop=FALSE])
+    }
+  } else {
+    for (k in 1:K) {
+      sel <- subset==k
+      pred[sel] <- mean(y[!sel],na.rm=TRUE)
+    }
+  }
+  return(list(pred=pred))
+}
+
+cv.mle = kfoldCV.mle(y = y, x= X[,-1], K = 10, seed = 1)
+
+# 10-fold cross-validated AUC
+round(assess.glmnet(cv.mle$pred, newy = y, family = "binomial")$auc, 5)
+```
+
+
+# LASSO
+```{r}
+### LASSO Model
+cv_lasso <- cv.glmnet(X, y, family="binomial", n_folds = 5, type.measure = 'auc')
+
+plot(cv_lasso)
+
+# In-sample AUC
+paste("AUC: ", round(cv_lasso$cvm[cv_lasso$index[1]], 5))
+
+# Non-zero covariates
+cv_lasso$nzero[cv_lasso$index[1]]
+
 ```
