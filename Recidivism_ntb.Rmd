@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(fastDummies)
 library(glmnet)
+library(pscl)
 ```
 
 # Recidivism Project
@@ -36,16 +37,47 @@ data_cleaned <- data %>%
 colSums(is.na(data_cleaned)) 
 
 # Missing vals for female vs male
-colSums(is.na(data_cleaned %>% filter(Gender == "F"))) 
-nrow(data_cleaned %>% filter(Gender == "F"))
+colSums(is.na(data_cleaned %>% filter(Gender == "M"))) 
+#nrow(data_cleaned %>% filter(Gender == "F"))
 
 # Row-wise
 summary((rowSums(is.na(data_cleaned))))
 
+# Investigate missing drug test data
+#missing_drug_tests <- data_cleaned %>% filter(is.na(DrugTests_THC_Positive) | is.na(DrugTests_Meth_Positive))
+#colSums(is.na(missing_drug_tests))
+
+# Investigate missing Jobs data 
+#missing_jobs <- data_cleaned %>% filter(is.na(Jobs_Per_Year))
+#colSums(is.na(missing_jobs))
+
 # For now just drop NAs
-data_cleaned <- data_cleaned %>%
-  na.omit() # removes almost half of our observations but data set still very large (note that this removes all entries for females)
+#data_cleaned <- data_cleaned %>%
+#  na.omit() # removes almost half of our observations but data set still very large (note that this removes all entries for females)
 ```
+
+```{r}
+### Resolve missing data 
+
+# Categorical vars
+data_cleaned <- data_cleaned %>%
+  mutate(Gang_Affiliated = ifelse(Gender == "F", "false", Gang_Affiliated),
+         Supervision_Risk_Score_First = ifelse(is.na(Supervision_Risk_Score_First), "missing",   Supervision_Risk_Score_First),
+         Supervision_Level_First = ifelse(is.na(Supervision_Level_First), "missing", Supervision_Level_First),
+         Prison_Offense = ifelse(is.na(Prison_Offense), "missing", Prison_Offense))
+
+# Remove 'DrugTest' vars (significant proportion is missing)
+data_cleaned <- data_cleaned %>%
+  select(-c(DrugTests_THC_Positive, DrugTests_Cocaine_Positive, DrugTests_Meth_Positive, DrugTests_Other_Positive, Avg_Days_per_DrugTest))
+
+# Replace missing jobs data with values 0
+data_cleaned <- data_cleaned %>%
+  mutate(Percent_Days_Employed = ifelse(is.na(Percent_Days_Employed), 0, Percent_Days_Employed),
+         Jobs_Per_Year = ifelse(is.na(Jobs_Per_Year), 0, Jobs_Per_Year))
+
+colSums(is.na(data_cleaned)) 
+```
+
 
 ```{r}
 ### Set up dependent var and covariate matrix
@@ -57,12 +89,14 @@ y <- data_cleaned %>%
 # 8423 observations correspond to a reoffence within three years
 #sum(y$Recidivism_Within_3years)/length(y)
 
-### Covariate matrix
+### Covariate matrix - removed supervision_risk_score as this is what we're trying to predict
 X <- data_cleaned %>%
-  select(-c(ID, Recidivism_Arrest_Year1, Recidivism_Arrest_Year2, Recidivism_Arrest_Year3, Training_Sample,Recidivism_Within_3years)) 
+  select(-c(ID, Recidivism_Arrest_Year1, Recidivism_Arrest_Year2, Recidivism_Arrest_Year3, Training_Sample,Recidivism_Within_3years, Supervision_Risk_Score_First)) 
 
 # dummy col 
-dummy_colnames <- X %>% select(-c(Avg_Days_per_DrugTest, DrugTests_THC_Positive,DrugTests_Cocaine_Positive, DrugTests_Meth_Positive, DrugTests_Other_Positive, Percent_Days_Employed, Jobs_Per_Year)) %>%
+#dummy_colnames <- X %>% select(-c(Avg_Days_per_DrugTest, DrugTests_THC_Positive,DrugTests_Cocaine_Positive, #DrugTests_Meth_Positive, DrugTests_Other_Positive, Percent_Days_Employed, Jobs_Per_Year)) %>%
+#  names()
+dummy_colnames <- X %>% select(-c(Percent_Days_Employed, Jobs_Per_Year)) %>%
   names()
 
 X <- dummy_cols(X, select_columns = dummy_colnames, remove_first_dummy = TRUE, remove_selected_columns = TRUE)
@@ -78,10 +112,22 @@ glm.fit <- glm(y ~.,family=binomial(link='logit'), data = as.data.frame(X[,-1]))
 
 summary(glm.fit)
 
+## Store results
+results <- glm.fit %>% 
+  tidy() 
+
+results[,2:ncol(results)] <- round(results[,2:ncol(results)], 4) 
+
+results <- results %>%
+  mutate(exp_estimate = exp(estimate))
+
 # Check in-sample fit
 pred <- predict(glm.fit, newx = X[,-1])
+
 assess.glmnet(pred, newy = y, family = "binomial")
 
+# Pseudo R2
+round(pR2(glm.fit),2)
 ```
 ```{r}
 ### Assess out-of-sample performance
@@ -116,7 +162,7 @@ kfoldCV.mle <- function(y , x, K = 10, seed = 1) {
   return(list(pred=pred))
 }
 
-cv.mle = kfoldCV.mle(y = y, x= X[,-1], K = 10, seed = 1)
+cv.mle = kfoldCV.mle(y = y, x= as.matrix(X[,-1]), K = 10, seed = 1)
 
 # 10-fold cross-validated AUC
 round(assess.glmnet(cv.mle$pred, newy = y, family = "binomial")$auc, 5)
