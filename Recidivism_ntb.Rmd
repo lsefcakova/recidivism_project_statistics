@@ -10,6 +10,8 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(fastDummies)
 library(glmnet)
+library(broom)
+
 library(pscl)
 ```
 
@@ -21,13 +23,14 @@ library(pscl)
 data = read.csv("NIJ_s_Recidivism_Challenge_Full_Dataset.csv")
 ```
 
-## Pre-processing 
+## Pre-processing
 
 data viz
 
 ```{r}
 head(data,10)
 ```
+
 ```{r}
 ### Investigate missing values
 data_cleaned <- data %>%
@@ -78,13 +81,13 @@ data_cleaned <- data_cleaned %>%
 colSums(is.na(data_cleaned)) 
 ```
 
-
 ```{r}
 ### Set up dependent var and covariate matrix
 y <- data_cleaned %>%
   select(Recidivism_Within_3years) %>%
   mutate(Recidivism_Within_3years = ifelse(Recidivism_Within_3years == "true", 1, 0)) %>%
-  as.matrix()
+  as.matrix()%>%
+  as.integer()
 
 # 8423 observations correspond to a reoffence within three years
 #sum(y$Recidivism_Within_3years)/length(y)
@@ -105,13 +108,16 @@ X <- model.matrix(~., data = X)
 
 ```
 
-## Fit regular logisitic model
+## Models
+
+### Regular logistic model
 
 ```{r}
 glm.fit <- glm(y ~.,family=binomial(link='logit'), data = as.data.frame(X[,-1]))
+#summary(glm.fit)
+```
 
-summary(glm.fit)
-
+```{r}
 ## Store results
 results <- glm.fit %>% 
   tidy() 
@@ -120,15 +126,20 @@ results[,2:ncol(results)] <- round(results[,2:ncol(results)], 4)
 
 results <- results %>%
   mutate(exp_estimate = exp(estimate))
+```
 
+```{r}
 # Check in-sample fit
 pred <- predict(glm.fit, newx = X[,-1])
 
 assess.glmnet(pred, newy = y, family = "binomial")
+```
 
+```{r}
 # Pseudo R2
 round(pR2(glm.fit),2)
 ```
+
 ```{r}
 ### Assess out-of-sample performance
 
@@ -168,8 +179,16 @@ cv.mle = kfoldCV.mle(y = y, x= as.matrix(X[,-1]), K = 10, seed = 1)
 round(assess.glmnet(cv.mle$pred, newy = y, family = "binomial")$auc, 5)
 ```
 
+```{r}
+confusion.glmnet(cv.mle$pred, newy = y,family='binomial')
+```
 
-# LASSO
+```{r}
+plt<- plot(roc.glmnet(cv.mle$pred, newy = y,family='binomial'),type="s")+title(main = "MLE ROC") + text(0.8,0.1,paste("AUC=", round(cvmle.perf$auc[1],5)))
+```
+
+### LASSO
+
 ```{r}
 ### LASSO Model
 cv_lasso <- cv.glmnet(X, y, family="binomial", n_folds = 5, type.measure = 'auc')
