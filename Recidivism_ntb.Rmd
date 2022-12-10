@@ -454,3 +454,11 @@ return(ci.lassopost)
 ci.lassopost= lassopost(y, X, method.lambda='cv')
 
 ```
+
+```{r}
+
+```
+
+```{r}
+
+```
