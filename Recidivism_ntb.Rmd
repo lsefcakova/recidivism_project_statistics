@@ -152,8 +152,7 @@ data_cleaned <- data_cleaned %>%
 ```{r}
 # Remove 'DrugTest' vars (significant proportion is missing)
 data_cleaned <- data_cleaned %>%
-  na.omit() %>%# removes almost half of our observations but data set still very large (note that this removes all entries for females)
-  select(-c(DrugTests_Cocaine_Positive, DrugTests_Meth_Positive, DrugTests_Other_Positive, Avg_Days_per_DrugTest,DrugTests_THC_Positive))
+  dplyr::select(-c(DrugTests_Cocaine_Positive, DrugTests_Meth_Positive, DrugTests_Other_Positive,   Avg_Days_per_DrugTest,DrugTests_THC_Positive))
   
 # Replace missing jobs data with values 0
 data_cleaned <- data_cleaned %>%
@@ -166,7 +165,7 @@ colSums(is.na(data_cleaned))
 ```{r}
 ### Set up dependent var and covariate matrix
 y <- data_cleaned %>%
-  select(Recidivism_Within_3years) %>%
+  dplyr::select(Recidivism_Within_3years) %>%
   mutate(Recidivism_Within_3years = ifelse(Recidivism_Within_3years == "true", 1, 0)) %>%
   as.matrix()%>%
   as.integer()
@@ -176,7 +175,7 @@ y <- data_cleaned %>%
 
 ### Covariate matrix - removed supervision_risk_score as this is what we're trying to predict
 X <- data_cleaned %>%
-  select(-c(ID, Recidivism_Arrest_Year1, Recidivism_Arrest_Year2, Recidivism_Arrest_Year3, Training_Sample,Recidivism_Within_3years, Supervision_Risk_Score_First)) 
+  dplyr::select(-c(ID, Recidivism_Arrest_Year1, Recidivism_Arrest_Year2, Recidivism_Arrest_Year3, Training_Sample,Recidivism_Within_3years, Supervision_Risk_Score_First)) 
 
 # dummy col 
 #dummy_colnames <- X %>% select(-c(Avg_Days_per_DrugTest, DrugTests_THC_Positive,DrugTests_Cocaine_Positive, #DrugTests_Meth_Positive, DrugTests_Other_Positive, Percent_Days_Employed, Jobs_Per_Year)) %>%
@@ -192,7 +191,6 @@ X <- model.matrix(~., data = X)
 
 ```{r}
 ### Give variables better names
-
 
 ```
 
@@ -455,10 +453,35 @@ ci.lassopost= lassopost(y, X, method.lambda='cv')
 
 ```
 
+### Attempt Clustering
+See: https://towardsdatascience.com/clustering-datasets-having-both-numerical-and-categorical-variables-ed91cdca0677
 ```{r}
+### Attempt clustering of mixed variable types using Gower distance metric
+categorical_colnames <- X %>% dplyr::select(-c(Percent_Days_Employed, Jobs_Per_Year)) %>%
+  names()
 
+# categorical vars need to be factors
+X_clustering <- X %>%
+  mutate_at(categorical_colnames, as.factor) 
+
+# could only handle
+gower_df <- daisy(X_clustering[1:20000,], metric = "gower")
+
+summary(gower_df)
 ```
 
 ```{r}
-
+### Choose optimal number of clusters using the 'Silhouette width'
+silhouette <- c()
+silhouette = c(silhouette, NA)
+for(i in 2:10){
+  pam_clusters = pam(as.matrix(gower_df),
+                 diss = TRUE,
+                 k = i)
+  silhouette = c(silhouette ,pam_clusters$silinfo$avg.width)
+}
+plot(1:10, silhouette,
+     xlab = "Clusters",
+     ylab = "Silhouette Width")
+lines(1:10, silhouette)
 ```
