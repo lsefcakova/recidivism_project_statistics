@@ -13,6 +13,7 @@ library(glmnet)
 library(broom)
 library(pscl)
 library(xtable)
+select <- dplyr::select
 ```
 
 ```{r}
@@ -45,6 +46,7 @@ lasso.bic <- function(y,x,extended=FALSE) {
   ans <- list(coef=beta,ypred=ypred,lambda.opt=fit$lambda[sel],lambda=data.frame(lambda=fit$lambda,bic=bic,nvars=p))
   return(ans)
 }
+
 kfoldCV.lasso <- function(y,x,K=10,seed,criterion='cv') {
 ## Perform K-fold cross-validation for LASSO regression estimate (lambda set either via cross-val or BIC or EBIC)
 ## Input
@@ -69,6 +71,13 @@ kfoldCV.lasso <- function(y,x,K=10,seed,criterion='cv') {
             fit <- cv.glmnet(x=x[!sel,,drop=FALSE], y=y[!sel], alpha = 1, nfolds=10,family = 'binomial',type_measure='auc')
             b= as.vector(coef(fit,s='lambda.min'))
             pred[sel] <- b[1] + x[sel,,drop=FALSE] %*% as.matrix(b[-1])
+         } else if (criterion=='adaptive_cv') {
+            fit <- cv.glmnet(x=x[!sel,,drop=FALSE], y=y[!sel], alpha = 1, nfolds=10,family = 'binomial',type_measure='auc')
+            lasso_coef <- 1/abs(matrix(coef(fit, s=fit$lambda.min)))
+lasso_coef[lasso_coef== Inf] <- 999999999
+adapt_fit <- cv.glmnet(x=x[!sel,,drop=FALSE], y=y[!sel], alpha = 1, nfolds=10,family = 'binomial',type_measure='auc', penalty.factor=lasso_coef[2:length(lasso_coef)])
+            b= as.vector(coef(adapt_fit,s='lambda.min'))
+            pred[sel] <- b[1] + x[sel,,drop=FALSE] %*% as.matrix(b[-1])
         } else if (criterion=='bic'){
             fit <- lasso.bic(y=y[!sel],x=x[!sel,,drop=FALSE])
             pred[sel] <- fit$coef[1] + x[sel,,drop=FALSE] %*% matrix(fit$coef[-1],ncol=1)
@@ -86,6 +95,7 @@ kfoldCV.lasso <- function(y,x,K=10,seed,criterion='cv') {
   }
   cat("\n")
   return(list(pred=pred,ssr=sum((pred-y)^2,na.rm=TRUE)))
+  }
 }
 ```
 
@@ -197,6 +207,7 @@ X <- model.matrix(~., data = X)
 ## Models
 
 ### Regular logistic model
+Useful resource: <https://rpubs.com/raoulbia/interpreting_glm_logistic_regression_output>
 
 ```{r}
 glm.fit <- glm(y ~.,family=binomial(link='logit'), data = as.data.frame(X[,-1]))
@@ -216,6 +227,11 @@ results[,2:ncol(results)] <- round(results[,2:ncol(results)], 4)
 
 # Get CIs
 mle_CIs <- confint(glm.fit)
+
+exp_mle_CIs <- exp(mle_CIs) %>%
+  round(4)
+
+results_table <-cbind(results, exp_mle_CIs)
 
 ## Make table for Latex
 print(xtable(results, type = "latex"), include.rownames=FALSE)
@@ -285,7 +301,7 @@ plt<- plot(roc.glmnet(cv.mle$pred, newy = y,family='binomial'),type="s")+title(m
 
 ```{r}
 ### LASSO Model
-cv_lasso <- cv.glmnet(X, y, family="binomial", n_folds = 10, type.measure = 'auc')
+cv_lasso <- cv.glmnet(X[,-1], y, family="binomial", n_folds = 10, type.measure = 'auc')
 plot(cv_lasso)
 # In-sample AUC
 paste("AUC: ", round(cv_lasso$cvm[cv_lasso$index[1]], 5))
@@ -348,6 +364,31 @@ lines(roc.glmnet(fit.lassoBICcv$pred, newy = y,family='binomial',s=fit.cvlasso$l
 legend(x = "bottomleft", legend = c('MLE','BIC'),col=c("red",'darkorange'),pch = c(20,20),cex = 1)
 title(main = 'ROC curve for different models')
 ```
+
+### Adaptive LASSO
+<https://ricardocarvalho.ca/post/lasso/>
+<https://rpubs.com/kaz_yos/alasso>
+```{r}
+# Extract coefficients from LASSO regression
+lasso_coef <- 1/abs(matrix(coef(cv_lasso, s=cv_lasso$lambda.min)))
+lasso_coef[lasso_coef== Inf] <- 999999999
+
+# Run Adaptive LASSO
+adapt_lasso <- cv.glmnet(X[,-1], y, family='binomial', alpha=1, type.measure='auc', penalty.factor=lasso_coef[2:length(lasso_coef)])
+
+# Number of non-zero covariates
+paste('Non-zero covariates:',adapt_lasso$nzero[adapt_lasso$index[1]])
+
+# In-sample AUC
+paste("AUC: ", round(adapt_lasso$cvm[adapt_lasso$index[1]], 5))
+
+# Cross-validation
+cv_adapt_lasso <- kfoldCV.lasso(y = y, x= as.matrix(X[,-1]),K=10,seed=1,criterion="adaptive_cv")
+
+# Cross-validated AUC
+cv.adapt_lasso.perf <-assess.glmnet(cv_adapt_lasso$pred, newy = y, family = "binomial")
+```
+
 
 ### Hierarchical Models?
 
@@ -474,7 +515,7 @@ summary(gower_df)
 ### Choose optimal number of clusters using the 'Silhouette width'
 silhouette <- c()
 silhouette = c(silhouette, NA)
-for(i in 2:10){
+for(i in 1:5){
   pam_clusters = pam(as.matrix(gower_df),
                  diss = TRUE,
                  k = i)
