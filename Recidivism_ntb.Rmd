@@ -234,7 +234,7 @@ print(xtable(results, type = "latex"), include.rownames=FALSE)
 # Check in-sample fit
 pred <- predict(glm.fit, newx = X[,-1])
 
-assess.glmnet(pred, newy = y, family = "binomial")
+MLE_insample <- assess.glmnet(pred, newy = y, family = "binomial")$auc
 ```
 
 ```{r}
@@ -278,7 +278,7 @@ kfoldCV.mle <- function(y , x, K = 10, seed = 1) {
 cv.mle = kfoldCV.mle(y = y, x= as.matrix(X[,-1]), K = 10, seed = 1)
 
 # 10-fold cross-validated AUC
-cv.mle.perf <-assess.glmnet(cv.mle$pred, newy = y, family = "binomial")
+cv.mle.perf <-assess.glmnet(cv.mle$pred, newy = y, family = "binomial")$auc
 cv.mle.perf
 ```
 
@@ -381,7 +381,7 @@ paste("AUC: ", round(adapt_lasso$cvm[adapt_lasso$index[1]], 5))
 cv_adapt_lasso <- kfoldCV.lasso(y = y, x= as.matrix(X[,-1]),K=10,seed=1,criterion="adaptive_cv")
 
 # Cross-validated AUC
-cv.adapt_lasso.perf <-assess.glmnet(cv_adapt_lasso$pred, newy = y, family = "binomial")
+cv.adapt_lasso.perf <-assess.glmnet(cv_adapt_lasso$pred, newy = y, family = "binomial")$auc
 ```
 
 
@@ -441,6 +441,7 @@ kfoldCV.lasso <- function(y,x,K=10,seed = 1,criterion='cv') {
 
 cv_cv_lasso <- kfoldCV.lasso(y, X[,-1], criterion = "cv")
 
+outsample_lasso <- assess.glmnet(cv_cv_lasso$pred, newy = y, family = "binomial")$auc
 ```
 
 ```{r}
@@ -492,6 +493,14 @@ ci.lassopost= lassopost(y, X, method.lambda='cv')
 ### Assemble regression results
 
 ```{r}
+### Accuracy results
+accuracy_results <- data.frame(Model = c("Standard Logisitic", "LASSO", "Adaptive LASSO"), 
+           "Covariates included" = c(134, cv_lasso$nzero[cv_lasso$index[1]]), adapt_lasso$nzero[adapt_lasso$index[1]],    
+           "In-sample AU" = c(round(MLE_insample,5), round(cv_lasso$cvm[cv_lasso$index[1]], 5), round(adapt_lasso$cvm[adapt_lasso$index[1]], 5)),
+           "Crossvalidated AUC" = c(round(cv.mle.perf,5),  round(outsample_lasso,5), round(cv.adapt_lasso.perf,5)))
+
+## Make table for Latex
+print(xtable(accuracy_results, type = "latex"))
 
 ```
 
