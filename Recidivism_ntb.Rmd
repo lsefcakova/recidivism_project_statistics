@@ -123,10 +123,6 @@ data_cleaned <- data %>%
 # Column-wise
 colSums(is.na(data_cleaned)) 
 
-# Missing vals for female vs male
-colSums(is.na(data_cleaned %>% filter(Gender == "M"))) 
-#nrow(data_cleaned %>% filter(Gender == "F"))
-
 # Row-wise
 summary((rowSums(is.na(data_cleaned))))
 
@@ -155,9 +151,6 @@ data_cleaned <- data_cleaned %>%
 
 ```
 
-```{r}
-
-```
 
 ```{r}
 # Remove 'DrugTest' vars (significant proportion is missing)
@@ -185,22 +178,22 @@ y <- data_cleaned %>%
 
 ### Covariate matrix - removed supervision_risk_score as this is what we're trying to predict
 X <- data_cleaned %>%
+  rename(Age = Age_at_Release, Residence = Residence_PUMA, Supervision_Level = Supervision_Level_First) %>%
   dplyr::select(-c(ID, Recidivism_Arrest_Year1, Recidivism_Arrest_Year2, Recidivism_Arrest_Year3, Training_Sample,Recidivism_Within_3years, Supervision_Risk_Score_First)) 
 
 # dummy col 
 #dummy_colnames <- X %>% select(-c(Avg_Days_per_DrugTest, DrugTests_THC_Positive,DrugTests_Cocaine_Positive, #DrugTests_Meth_Positive, DrugTests_Other_Positive, Percent_Days_Employed, Jobs_Per_Year)) %>%
 #  names()
+
+# Rename vars
+colnames(X) <- gsub("Episodes_","",colnames(X))  
+
 dummy_colnames <- X %>% select(-c(Percent_Days_Employed, Jobs_Per_Year)) %>%
   names()
 
 X <- dummy_cols(X, select_columns = dummy_colnames, remove_first_dummy = TRUE, remove_selected_columns = TRUE)
 
 X <- model.matrix(~., data = X)
-
-```
-
-```{r}
-### Give variables better names
 
 ```
 
@@ -221,12 +214,12 @@ results <- glm.fit %>%
 
 results <- results %>%
   mutate(exp_estimate = exp(estimate)) %>%
-  select(term, exp_estimate, p.value)
+  select(term, exp_estimate)
 
 results[,2:ncol(results)] <- round(results[,2:ncol(results)], 4) 
 
 # Get CIs
-mle_CIs <- confint(glm.fit)
+mle_CI <- confint(glm.fit)
 
 exp_mle_CIs <- exp(mle_CIs) %>%
   round(4)
@@ -308,7 +301,9 @@ paste("AUC: ", round(cv_lasso$cvm[cv_lasso$index[1]], 5))
 
 #fit.lassoCV <-kfoldCV.lasso(y = y, x= as.matrix(X[,-1]),K=10,seed=1,criterion="cv")$pred
 
-
+# Coefficients
+lasso_estimate <- coef(cv_lasso, s=cv_lasso$lambda.min) 
+ 
 ```
 
 ```{r}
@@ -491,6 +486,12 @@ return(ci.lassopost)
 }
 
 ci.lassopost= lassopost(y, X, method.lambda='cv')
+
+```
+
+### Assemble regression results
+
+```{r}
 
 ```
 
