@@ -214,7 +214,7 @@ results <- glm.fit %>%
 
 results <- results %>%
   mutate(exp_estimate = exp(estimate)) %>%
-  select(term, exp_estimate)
+  select(term, exp_estimate, p.value)
 
 results[,2:ncol(results)] <- round(results[,2:ncol(results)], 4) 
 
@@ -229,6 +229,7 @@ results_table <-cbind(results, exp_mle_CIs)
 ## Make table for Latex
 print(xtable(results, type = "latex"), include.rownames=FALSE)
 ```
+
 
 ```{r}
 # Check in-sample fit
@@ -287,7 +288,7 @@ confusion.glmnet(cv.mle$pred, newy = y,family='binomial')
 ```
 
 ```{r}
-plt<- plot(roc.glmnet(cv.mle$pred, newy = y,family='binomial'),type="s")+title(main = "MLE ROC") + text(0.8,0.1,paste("AUC=", round(cv.mle.perf$auc[1],5)))
+plt<- plot(roc.glmnet(cv.mle$pred, newy = y,family='binomial'),type="s")+title(main = "MLE ROC") + text(0.8,0.1,paste("AUC=", round(cv.mle.perf,5)))
 ```
 
 ### LASSO
@@ -302,7 +303,7 @@ paste("AUC: ", round(cv_lasso$cvm[cv_lasso$index[1]], 5))
 #fit.lassoCV <-kfoldCV.lasso(y = y, x= as.matrix(X[,-1]),K=10,seed=1,criterion="cv")$pred
 
 # Coefficients
-lasso_estimate <- coef(cv_lasso, s=cv_lasso$lambda.min) 
+lasso_estimate <- as.vector(coef(cv_lasso, s=cv_lasso$lambda.min)) 
  
 ```
 
@@ -371,6 +372,8 @@ lasso_coef[lasso_coef== Inf] <- 999999999
 # Run Adaptive LASSO
 adapt_lasso <- cv.glmnet(X[,-1], y, family='binomial', alpha=1, type.measure='auc', penalty.factor=lasso_coef[2:length(lasso_coef)])
 
+plot(adapt_lasso)
+
 # Number of non-zero covariates
 paste('Non-zero covariates:',adapt_lasso$nzero[adapt_lasso$index[1]])
 
@@ -382,6 +385,12 @@ cv_adapt_lasso <- kfoldCV.lasso(y = y, x= as.matrix(X[,-1]),K=10,seed=1,criterio
 
 # Cross-validated AUC
 cv.adapt_lasso.perf <-assess.glmnet(cv_adapt_lasso$pred, newy = y, family = "binomial")$auc
+
+adapt_coef <- as.vector(coef(adapt_lasso,s='lambda.min')) 
+adapt_coef <- as.data.frame(adapt_coef)
+row.names(adapt_coef) = row.names(ci_lasso_df)
+
+
 ```
 
 
@@ -490,18 +499,99 @@ ci.lassopost= lassopost(y, X, method.lambda='cv')
 
 ```
 
+```{r}
+plot(NA, ylim=1.25*range(ci.lassopost[,1:3]), xlim=c(0,nrow(ci.lassopost)), ylab='95% CI', xlab='', main='')
+#cols= ifelse(beta < ci.bootlasso[, 1] | beta > ci.bootlasso[, 2], 2, 1)
+segments(y0 = ci.bootlasso[, 1], y1 = ci.bootlasso[, 2], x0 = 1:nrow(ci.bootlasso))#, col = cols)
+points(1:p, beta, pch = 16)
+
+ci_lasso_df <- as.data.frame(ci.lassopost) 
+
+plot_CIs <- ggplot(ci_lasso_df, aes(x = 1:133, y = exp(estimate))) +
+            geom_point(size = 0.8, pch = 21, fill= "black", alpha = 0.8) +
+            geom_errorbar(aes(ymin = exp(ci.low) , ymax = exp(ci.up)), lwd = 0.2, width = 0) +
+            xlab("Variable index") +
+            ylab("Odds ratio") +
+            ggtitle("LASSO Point Estimates and 95% Confidence Intervals")
+
+```
+
+```{r}
+### Obtain CIs & P-values for Adpative LASSO
+
+# Helper function
+adapt_lassopost <- function(y,x, method.lambda, verbose = FALSE) {
+#Run LASSO + post-selection inference on selected coefficients. lambda set via 10-fold cross-validation
+#Input
+# - y: response variable
+# - x: design matrix
+#
+# Output: matrix with parameter estimates, 95% CIs and P-values for the variables selected by LASSO (lambda set via cross-validation), using the post-selection inference method of Lee et al (2016)
+require(glmnet)
+require(selectiveInference)
+x= x[,apply(x,2,'sd') > 0] #remove intercept
+xstd= scale(x); ystd= scale(y) #important!
+if (is.null(colnames(x))) {
+colnames(xstd)= paste('X',1:ncol(xstd),sep='')
+} else {
+colnames(xstd)= colnames(x)
+}
+#Estimate residual variance
+sigmahat= estimateSigma(x=xstd, y=ystd, standardize=FALSE)$sigmahat
+#Set lambda
+if (method.lambda == 'cv') {
+cvfit= cv.glmnet(x=xstd, y=ystd, nfolds=10,exact=TRUE)
+lasso_coef <- 1/abs(matrix(coef(cvfit, s=cvfit$lambda.min)))
+lasso_coef[lasso_coef== Inf] <- 999999999
+cvfit <- cv.glmnet(x=xstd, y=ystd, alpha = 1, nfolds=10,family = 'binomial',type_measure='auc', penalty.factor=lasso_coef[2:length(lasso_coef)])
+lambda= cvfit$lambda.min
+} else if (method.lambda == 'bic') {
+lambda= lasso.bic(y=ystd, x=xstd)$lambda.opt
+} else { stop("method.lambda not implemented") }
+#LASSO estimate for selected lambda 
+gfit= glmnet(x=xstd, y=ystd, standardize=FALSE, lambda=lambda,exact=TRUE,thresh=1e-25)
+b= coef(gfit,exact=TRUE)[-1]
+#Post-selection inference
+lcv= fixedLassoInf(x=xstd,y=ystd,beta=b,lambda=lambda*nrow(x),sigma=sigmahat,verbose=verbose)
+sel.lasso= (b!=0)
+ci.lassopost= matrix(0,nrow=length(b),ncol=4)
+colnames(ci.lassopost)= c('estimate','ci.low','ci.up','pvalue'); rownames(ci.lassopost)= colnames(xstd)
+ci.lassopost[b != 0,]= cbind(lcv$coef0, lcv$ci, lcv$pv)
+ci.lassopost[b == 0,4]= NA
+return(ci.lassopost)
+}
+
+adapt.lassopost= lassopost(y, X, method.lambda='cv')
+
+```
+
+
 ### Assemble regression results
 
 ```{r}
 ### Accuracy results
 accuracy_results <- data.frame(Model = c("Standard Logisitic", "LASSO", "Adaptive LASSO"), 
-           "Covariates included" = c(134, cv_lasso$nzero[cv_lasso$index[1]]), adapt_lasso$nzero[adapt_lasso$index[1]],    
+           "Covariates included" = c(134, cv_lasso$nzero[cv_lasso$index[1]], adapt_lasso$nzero[adapt_lasso$index[1]]),    
            "In-sample AU" = c(round(MLE_insample,5), round(cv_lasso$cvm[cv_lasso$index[1]], 5), round(adapt_lasso$cvm[adapt_lasso$index[1]], 5)),
-           "Crossvalidated AUC" = c(round(cv.mle.perf,5),  round(outsample_lasso,5), round(cv.adapt_lasso.perf,5)))
+           "Crossvalidated AUC" = c(round(cv.mle.perf,5),  round(outsample_lasso,5), round(cv.adapt_lasso.perf,5)),
+           "Optimal lambda" = c("-", round(cv_lasso$lambda.min,5), round(adapt_lasso$lambda.min,5)))
 
 ## Make table for Latex
 print(xtable(accuracy_results, type = "latex"))
 
+### Coefficients and confidence intervals
+results_inference <- results_table %>%
+  mutate(LASSO_estimate = round(c(NA, ci.lassopost[,1]),4),
+         LASSO_estimate = ifelse(LASSO_estimate == 0, 0.0000, round(exp(LASSO_estimate),4)),
+         LASS0_CI_lower = round(c(NA, ci.lassopost[,2]),4),
+         LASS0_CI_lower = ifelse(LASS0_CI_lower == 0, 0, round(exp(LASS0_CI_lower),4)),
+         LASS0_CI_upper = round(c(NA, ci.lassopost[,3]),4),
+         LASS0_CI_upper = ifelse(LASS0_CI_upper == 0, 0, round(exp(LASS0_CI_upper),4)),
+         LASSO_pvalue = round(c(NA,ci_lassopost[,4]),4))
+
+## Make table for Latex
+print(xtable(results_inference, type = "latex", digits = 3), include.rownames = FALSE)  
+  
 ```
 
 ### Attempt Clustering
